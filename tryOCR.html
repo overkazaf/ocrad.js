@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>OCR</title>
+    <script type="text/javascript" src="ocrad.js"></script>
+</head>
+
+<body>
+    <canvas id="canvas" width="1000" height="300" style="border:2px dotted #09f;"></canvas>
+    <canvas id="cropped" width="400" height="300" style="border:2px dotted #aaa;"></canvas>
+    <div>
+        <input type="file" id="picker" onchange="picked_file(this.files[0])">
+    </div>
+    <p>
+        <h1>Source File:</h1>
+        <div>
+            <img id="img1" class="gray" border="1" />
+        </div>
+    </p>
+    <center>
+        <h2 id="info">Reconition</h2>
+        <div id="text" style="width:500px;height:100px;border:1px solid #f00;"></div>
+    </center>
+    <script type="text/javascript">
+    function $(id) {
+        return typeof id == 'object' ? id : document.getElementById(id);
+    }
+
+    function picked_file(file) {
+        if (!file) return;
+        var reader = new FileReader();
+        var ext = file.name.split('.').slice(-1)[0];
+        var reader = new FileReader();
+        var c = $('canvas');
+        var ctx = c.getContext('2d');
+        var img = $('img1')
+
+        if (file.type == "image/x-portable-bitmap" || ext == 'pbm' || ext == 'pgm' || ext == 'pnm' || ext == 'ppm') {
+            reader.onload = function() {
+                $("info").innerHTML = 'Recognizing Text... This may take a while...'
+                ctx.font = '30px sans-serif'
+                ctx.fillText('No previews for NetPBM format.', 50, 100);
+                runOCR(new Uint8Array(reader.result), true);
+            }
+            reader.readAsArrayBuffer(file)
+        } else {
+            reader.onload = function() {
+                img.src = reader.result;
+                img.onload = function() {
+                    $("info").innerHTML = 'Recognizing Text... This may take a while...'
+                    ctx.width = img.width;
+                    ctx.height = img.height;
+                    ctx.clearRect(0, 0, c.width, c.height);
+                    ctx.drawImage(img, 0, 0)
+                    var image_data = ctx.getImageData(0, 0, img.width, img.height);
+
+                    var tot = image_data.width * image_data.height;
+                    var r = 0, g = 0, b = 0;
+                    for (var x = 0; x < image_data.width; x++) {
+                        for (var y = 0; y < image_data.height; y++) {
+                            var i = x * 4 + y * 4 * image_data.width;
+                            var luma = Math.floor(image_data.data[i] * 299 / 1000 +
+                                image_data.data[i + 1] * 587 / 1000 +
+                                image_data.data[i + 2] * 114 / 1000);
+                            // r += parseFloat(image_data.data[i]);
+                            // g += parseFloat(image_data.data[i+1]);
+                            // b += parseFloat(image_data.data[i+2]);
+                            r += luma;
+                            g += luma;
+                            b += luma;
+
+                            image_data.data[i] = luma;
+                            image_data.data[i + 1] = luma;
+                            image_data.data[i + 2] = luma;
+                            image_data.data[i + 3] = 255;
+                            
+                        }
+                    }
+                    var mean = (r + g + b)/(3 * tot);
+                    // for (x = 0; x < image_data.width; x++) {
+                    //     for (y = 0; y < image_data.height; y++) {
+                    //         i = x * 4 + y * 4 * image_data.width;
+                    //         if (parseFloat(image_data[i]) >= mean) {
+                    //         	image_data.data[i] = 255;
+	                   //          image_data.data[i + 1] = 255;
+	                   //          image_data.data[i + 2] = 255;
+                    //         } else {
+                    //         	image_data.data[i] = 0;
+	                   //          image_data.data[i + 1] = 0;
+	                   //          image_data.data[i + 2] = 0;
+                    //         }
+                    //     }
+                    // }
+
+                    ctx.putImageData(image_data, 0, 0);
+                    image_data = ctx.getImageData(0, 0, img.width, img.height);
+                    
+                    var cropped = $('cropped');
+                    var cctx = cropped.getContext('2d');
+                    cctx.clearRect(0, 0, 400, 300);
+                    cctx.putImageData(image_data, 0, 0);
+
+                    runOCR(image_data, true);
+                }
+
+            }
+            reader.readAsDataURL(file)
+        }
+
+    }
+
+
+
+    function doFiltering(image_data) {
+        image_data = filter(image_data[0], 105);
+        image_data = filter(image_data[1], 120);
+        image_data = filter(image_data[2], 135);
+        return image_data;
+    }
+
+    function filter(image_data, colour) {
+        for (var x = 0; x < image_data.width; x++) {
+            for (var y = 0; y < image_data.height; y++) {
+                var i = x * 4 + y * 4 * image_data.width;
+                // Turn all the pixels of the certain colour to white
+                if (image_data.data[i] == colour) {
+                    image_data.data[i] = 255;
+                    image_data.data[i + 1] = 255;
+                    image_data.data[i + 2] = 255;
+
+                    // Everything else to black
+                } else {
+                    image_data.data[i] = 0;
+                    image_data.data[i + 1] = 0;
+                    image_data.data[i + 2] = 0;
+                }
+            }
+        }
+        return image_data;
+    }
+
+    var worker = new Worker('worker.js');
+
+    var lastWorker = null;
+
+    function runOCR(data, flag) {
+        worker.onmessage = function(e) {
+            var result = postProccess(e.data);
+            if ('innerText' in $("text")) {
+                $("text").innerText = result;
+            } else {
+                $("text").textContent = result;
+            }
+        }
+        var start = Date.now()
+        worker.postMessage(data)
+        lastWorker = worker;
+    }
+
+    function postProccess(data) {
+        var ret = '';
+        for (var i = 0, l = data.length; i < l; i++) {
+            var bit = data.charAt(i);
+            // if (isNaN(bit) || bit == ' ') {
+            // 	if (bit == ' ') {
+            // 		ret += '*';
+            // 	}
+            // 	continue;
+            // }
+            ret += bit;
+        }
+        return ret;
+    }
+    </script>
+</body>
+
+</html>
